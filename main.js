@@ -1,44 +1,77 @@
 'use strict';
 
-const { Plugin, TFile, Notice, MarkdownView } = require('obsidian');
+const { Plugin, TFile, Notice } = require('obsidian');
 
 // Vorlage für den eingefügten Text. {{file}} wird durch den Link-Namen ersetzt.
 const TEMPLATE = '```slide-note\nfile: {{file}}\n```\n';
 
-// Debug-Ausgaben in der Entwicklerkonsole (Strg/Cmd+Shift+I). Bei Bedarf auf false setzen.
+// Debug-Ausgaben in der Entwicklerkonsole (Strg/Cmd+Shift+I)
 const DEBUG = true;
 const log = (...a) => { if (DEBUG) console.log('[PDF Slide Drop]', ...a); };
 
 module.exports = class PdfSlideDropPlugin extends Plugin {
   async onload() {
-    log('geladen');
-    // Capture-Phase auf document: läuft vor Obsidians/CodeMirrors eigenem Drop-Handler
-    this.registerDomEvent(document, 'drop', (evt) => this.onDrop(evt), true);
+    log('geladen (v3)');
+
+    // Auf dem Hauptfenster und auf allen Popout-Fenstern lauschen
+    this.attachToWindow(window);
+    this.registerEvent(
+      this.app.workspace.on('window-open', (_win, w) => this.attachToWindow(w))
+    );
+
+    // Zusätzlich Obsidians eigenes Editor-Event (nur zur Diagnose + als zweiter Weg)
+    this.registerEvent(
+      this.app.workspace.on('editor-drop', (evt, editor, info) => {
+        log('editor-drop Event', { defaultPrevented: evt.defaultPrevented });
+        if (evt.defaultPrevented) return;
+        this.handle(evt, editor, info && info.file ? info.file.path : '');
+      })
+    );
   }
 
-  onDrop(evt) {
-    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-    if (!view || !view.editor) return;
+  attachToWindow(w) {
+    log('lausche auf Fenster');
+    this.registerDomEvent(w, 'dragstart', (e) => {
+      const dt = e.dataTransfer;
+      log('dragstart', {
+        target: e.target && e.target.className,
+        types: dt ? Array.from(dt.types) : null,
+        text: dt ? dt.getData('text/plain') : null
+      });
+    }, true);
 
-    // Nur Drops in den Editor-Bereich der aktiven Notiz
-    const target = evt.target;
-    if (!(target instanceof Element) || !target.closest('.cm-editor')) return;
-    if (!view.containerEl.contains(target)) return;
+    this.registerDomEvent(w, 'drop', (evt) => {
+      const dt = evt.dataTransfer;
+      log('drop (window, capture)', {
+        target: evt.target && (evt.target.className || evt.target.tagName),
+        inEditor: !!(evt.target instanceof Element && evt.target.closest('.cm-editor')),
+        types: dt ? Array.from(dt.types) : null,
+        files: dt ? dt.files.length : null,
+        text: dt ? dt.getData('text/plain') : null
+      });
 
+      if (!(evt.target instanceof Element) || !evt.target.closest('.cm-editor')) return;
+      const ae = this.app.workspace.activeEditor;
+      const editor = ae && ae.editor;
+      if (!editor) { log('kein aktiver Editor gefunden'); return; }
+      const sourcePath = (ae.file && ae.file.path) || '';
+      this.handle(evt, editor, sourcePath);
+    }, true);
+  }
+
+  handle(evt, editor, sourcePath) {
+    if (evt.__pdfSlideHandled) return;
     const dt = evt.dataTransfer;
     if (!dt) return;
 
-    const sourcePath = (view.file && view.file.path) || '';
-    log('drop', { types: Array.from(dt.types), files: dt.files.length, text: dt.getData('text/plain') });
-
     // 1) Interner Drag aus dem Datei-Explorer
     const internal = this.resolveInternalFiles(dt, sourcePath);
+    log('interne Dateien erkannt:', internal.map(f => f.path));
     if (internal.length > 0) {
-      const allPdf = internal.every(f => f.extension.toLowerCase() === 'pdf');
-      if (!allPdf) return; // Standardverhalten für alles andere
+      if (!internal.every(f => f.extension.toLowerCase() === 'pdf')) return;
       this.takeOver(evt);
       const text = internal.map(f => this.buildBlock(f, sourcePath)).join('\n');
-      this.insertAtCoords(evt.clientX, evt.clientY, view.editor, text);
+      this.insertAtCoords(evt.clientX, evt.clientY, editor, text);
       return;
     }
 
@@ -47,7 +80,7 @@ module.exports = class PdfSlideDropPlugin extends Plugin {
       const files = Array.from(dt.files);
       if (!files.every(f => f.name.toLowerCase().endsWith('.pdf'))) return;
       this.takeOver(evt);
-      const x = evt.clientX, y = evt.clientY, editor = view.editor;
+      const x = evt.clientX, y = evt.clientY;
       this.saveExternalPdfs(files, sourcePath)
         .then(saved => {
           const text = saved.map(f => this.buildBlock(f, sourcePath)).join('\n');
@@ -61,12 +94,13 @@ module.exports = class PdfSlideDropPlugin extends Plugin {
   }
 
   takeOver(evt) {
+    evt.__pdfSlideHandled = true;
     evt.preventDefault();
     evt.stopPropagation();
     evt.stopImmediatePropagation();
+    log('Drop übernommen');
   }
 
-  // Liest die gezogenen Vault-Dateien aus dataTransfer (text/plain enthält obsidian://-Links)
   resolveInternalFiles(dt, sourcePath) {
     const raw = dt.getData('text/plain');
     if (!raw) return [];
@@ -78,13 +112,11 @@ module.exports = class PdfSlideDropPlugin extends Plugin {
 
       let path = null;
       if (entry.startsWith('obsidian://')) {
-        try {
-          path = new URL(entry).searchParams.get('file');
-        } catch (e) { /* ignorieren */ }
-      } else if (entry.startsWith('[[') && entry.endsWith(']]')) {
-        path = entry.slice(2, -2).split('|')[0];
+        try { path = new URL(entry).searchParams.get('file'); } catch (e) { /* ignorieren */ }
       } else if (entry.startsWith('![[') && entry.endsWith(']]')) {
         path = entry.slice(3, -2).split('|')[0];
+      } else if (entry.startsWith('[[') && entry.endsWith(']]')) {
+        path = entry.slice(2, -2).split('|')[0];
       } else {
         path = entry;
       }
