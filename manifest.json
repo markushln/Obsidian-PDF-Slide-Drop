@@ -1,0 +1,9 @@
+{
+  "id": "pdf-slide-drop",
+  "name": "PDF Slide Drop",
+  "version": "1.0.0",
+  "minAppVersion": "1.5.0",
+  "description": "Fügt beim Drag & Drop von PDF-Dateien einen slide-note-Codeblock statt ![[datei.pdf]] ein.",
+  "author": "markushln",
+  "isDesktopOnly": false
+}
