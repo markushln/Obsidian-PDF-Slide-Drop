@@ -6,7 +6,7 @@ const { Plugin, TFile, Notice } = require('obsidian');
 const TEMPLATE = '```slide-note\nfile: {{file}}\n```\n';
 
 // Debug-Ausgaben in der Entwicklerkonsole (Strg/Cmd+Shift+I)
-const DEBUG = true;
+const DEBUG = false;
 const log = (...a) => { if (DEBUG) console.log('[PDF Slide Drop]', ...a); };
 
 module.exports = class PdfSlideDropPlugin extends Plugin {
