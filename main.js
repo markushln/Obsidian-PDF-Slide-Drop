@@ -11,7 +11,7 @@ const log = (...a) => { if (DEBUG) console.log('[PDF Slide Drop]', ...a); };
 
 module.exports = class PdfSlideDropPlugin extends Plugin {
   async onload() {
-    log('geladen (v3)');
+    log('geladen (v4)');
 
     // Auf dem Hauptfenster und auf allen Popout-Fenstern lauschen
     this.attachToWindow(window);
@@ -51,12 +51,32 @@ module.exports = class PdfSlideDropPlugin extends Plugin {
       });
 
       if (!(evt.target instanceof Element) || !evt.target.closest('.cm-editor')) return;
-      const ae = this.app.workspace.activeEditor;
-      const editor = ae && ae.editor;
-      if (!editor) { log('kein aktiver Editor gefunden'); return; }
-      const sourcePath = (ae.file && ae.file.path) || '';
-      this.handle(evt, editor, sourcePath);
+      const found = this.findEditorFor(evt.target);
+      if (!found) { log('kein Editor für das Drop-Ziel gefunden'); return; }
+      log('Editor gefunden für', found.sourcePath);
+      this.handle(evt, found.editor, found.sourcePath);
     }, true);
+  }
+
+  // Sucht die Notiz (Markdown-View), in der das Drop-Ziel liegt
+  findEditorFor(target) {
+    let found = null;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (found) return;
+      const view = leaf.view;
+      if (!view || view.getViewType() !== 'markdown' || !view.editor) return;
+      if (view.containerEl && view.containerEl.contains(target)) {
+        found = { editor: view.editor, sourcePath: (view.file && view.file.path) || '' };
+      }
+    });
+    if (found) return found;
+
+    // Fallbacks
+    const ae = this.app.workspace.activeEditor;
+    if (ae && ae.editor) return { editor: ae.editor, sourcePath: (ae.file && ae.file.path) || '' };
+    const view = this.app.workspace.getActiveViewOfType(require('obsidian').MarkdownView);
+    if (view && view.editor) return { editor: view.editor, sourcePath: (view.file && view.file.path) || '' };
+    return null;
   }
 
   handle(evt, editor, sourcePath) {
